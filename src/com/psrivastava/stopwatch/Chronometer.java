@@ -2,32 +2,44 @@ package com.psrivastava.stopwatch;
 
 import java.text.DecimalFormat;
 
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.os.Handler;
+import android.os.IBinder;
 import android.os.Message;
-import android.os.SystemClock;
+import android.os.RemoteException;
 import android.util.AttributeSet;
+import android.util.Log;
 import android.widget.TextView;
 
-/* Customized version of Chronometer class
+/* Gets time from service and displays it.
  * Original source from Antonis Balasas
  * https://github.com/antoniom/Millisecond-Chronometer
  */
 public class Chronometer extends TextView {
 	private static final String TAG = "Chronometer";
-
-	public interface OnChronometerTickListener {
-
-		void onChronometerTick(Chronometer chronometer);
-	}
-
-	private long mBase;
-	private boolean mVisible;
-	private boolean mStarted;
+	
 	private boolean mRunning;
-	private OnChronometerTickListener mOnChronometerTickListener;
 
 	private static final int TICK_WHAT = 2;
+	
+	IChronometerService mService;
+	
+	private ServiceConnection mConnection = new ServiceConnection() {
+		
+		public void onServiceDisconnected(ComponentName name) {
+			stopDisplay();
+		}
+		
+		public void onServiceConnected(ComponentName name, IBinder service) {
+			mService = IChronometerService.Stub.asInterface(service);
+			Log.v(TAG, "Service Connected");
+			updateText();
+			startDisplay();
+		}
+	};
 
 	public Chronometer(Context context) {
 		this(context, null, 0);
@@ -39,118 +51,120 @@ public class Chronometer extends TextView {
 
 	public Chronometer(Context context, AttributeSet attrs, int defStyle) {
 		super(context, attrs, defStyle);
-
-		init();
-	}
-
-	private void init() {
-		mBase = SystemClock.elapsedRealtime();
-		updateText(mBase);
-	}
-
-	public void setBase(long base) {
-		mBase = base;
-		dispatchChronometerTick();
-		updateText(SystemClock.elapsedRealtime());
-	}
-
-	public long getBase() {
-		return mBase;
-	}
-
-	public void setOnChronometerTickListener(OnChronometerTickListener listener) {
-		mOnChronometerTickListener = listener;
-	}
-
-	public OnChronometerTickListener getOnChronometerTickListener() {
-		return mOnChronometerTickListener;
+		context.getApplicationContext().bindService(new Intent(context, ChronometerService.class), mConnection, Context.BIND_AUTO_CREATE);
 	}
 
 	public void start() {
-		mStarted = true;
-		updateRunning();
+		try {
+			mService.start();
+		} catch (RemoteException e) {
+			Log.e(TAG, "Connection to service failed.", e);
+		}
+		startDisplay();
 	}
-
-	public boolean isStarted() {
-		return mStarted;
+	
+	public void pause() {
+		try {
+			mService.pause();
+		} catch (RemoteException e) {
+			Log.e(TAG, "Connection to service failed.", e);
+		}
+		stopDisplay();
+		updateText();
+	}
+	
+	public void resume() {
+		try {
+			mService.resume();
+		} catch (RemoteException e) {
+			Log.e(TAG, "Connection to service failed.", e);
+		}
+		startDisplay();
 	}
 
 	public void stop() {
-		mStarted = false;
-		updateRunning();
+		try {
+			mService.stop();
+		} catch (RemoteException e) {
+			Log.e(TAG, "Connection to service failed.", e);
+		}
+		stopDisplay();
+		updateText();
 	}
 
 	@Override
 	protected void onDetachedFromWindow() {
-		super.onDetachedFromWindow();
-		mVisible = false;
-		updateRunning();
+		stopDisplay();
 	}
 
 	@Override
 	protected void onWindowVisibilityChanged(int visibility) {
-		super.onWindowVisibilityChanged(visibility);
-		mVisible = visibility == VISIBLE;
-		updateRunning();
-	}
-
-	private synchronized void updateText(long now) {
-		long timeElapsed = now - mBase;
-
-		DecimalFormat df = new DecimalFormat("00");
-
-		int hours = (int) (timeElapsed / (3600 * 1000));
-		int remaining = (int) (timeElapsed % (3600 * 1000));
-
-		int minutes = (int) (remaining / (60 * 1000));
-		remaining = (int) (remaining % (60 * 1000));
-
-		int seconds = (int) (remaining / 1000);
-		remaining = (int) (remaining % (1000));
-
-		int milliseconds = (int) (((int) timeElapsed % 1000) / 100);
-
-		String text = "";
-
-		if (hours > 0) {
-			text += df.format(hours) + ":";
+		if (visibility == VISIBLE) {
+			startDisplay();
 		}
-
-		text += df.format(minutes) + ":";
-		text += df.format(seconds) + ".";
-		text += Integer.toString(milliseconds);
-
-		setText(text);
+		else {
+			stopDisplay();
+		}		
 	}
 
-	private void updateRunning() {
-		boolean running = mVisible && mStarted;
-		if (running != mRunning) {
-			if (running) {
-				updateText(SystemClock.elapsedRealtime());
-				dispatchChronometerTick();
-				mHandler.sendMessageDelayed(
-						Message.obtain(mHandler, TICK_WHAT), 100);
-			} else {
-				mHandler.removeMessages(TICK_WHAT);
+	/**
+	 * Display elapsed time.
+	 */
+	private synchronized void updateText() {
+		
+		try {
+			long timeElapsed;
+				timeElapsed = mService.getTime();
+	
+			DecimalFormat df = new DecimalFormat("00");
+	
+			int hours = (int) (timeElapsed / (3600 * 1000));
+			int remaining = (int) (timeElapsed % (3600 * 1000));
+	
+			int minutes = (int) (remaining / (60 * 1000));
+			remaining = (int) (remaining % (60 * 1000));
+	
+			int seconds = (int) (remaining / 1000);
+			remaining = (int) (remaining % (1000));
+	
+			int milliseconds = (int) (((int) timeElapsed % 1000) / 100);
+	
+			String text = "";
+	
+			if (hours > 0) {
+				text += df.format(hours) + ":";
 			}
-			mRunning = running;
+	
+			text += df.format(minutes) + ":";
+			text += df.format(seconds) + ".";
+			text += Integer.toString(milliseconds);
+	
+			setText(text);
+		} catch (RemoteException e) {
+			Log.e(TAG, "Connection to service failed.", e);
 		}
+	}
+	
+	private void startDisplay() {
+		try {
+			if (!mRunning && mService != null && mService.isRunning()) {
+				mHandler.dispatchMessage(Message.obtain(mHandler, TICK_WHAT));	
+				mRunning = true;
+			}
+		} catch (RemoteException e) {
+			Log.e(TAG, "Connection to service failed.", e);
+		}
+	}
+	
+	private void stopDisplay() {
+		mHandler.removeMessages(TICK_WHAT);			
+		mRunning = false;
 	}
 
 	private Handler mHandler = new Handler() {
 		public void handleMessage(Message m) {
-			if (mRunning) {
-				updateText(SystemClock.elapsedRealtime());
-				dispatchChronometerTick();
-				sendMessageDelayed(Message.obtain(this, TICK_WHAT), 100);
-			}
+			sendMessageDelayed(Message.obtain(this, TICK_WHAT), 100);
+			updateText();
 		}
 	};
-
-	void dispatchChronometerTick() {
-		if (mOnChronometerTickListener != null) {
-			mOnChronometerTickListener.onChronometerTick(this);
-		}
-	}
 }

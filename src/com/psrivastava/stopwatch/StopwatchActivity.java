@@ -1,8 +1,13 @@
 package com.psrivastava.stopwatch;
 
 import android.app.Activity;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.os.Bundle;
-import android.os.SystemClock;
+import android.os.IBinder;
+import android.os.RemoteException;
 import android.util.Log;
 import android.view.View;
 import android.view.View.OnClickListener;
@@ -11,15 +16,17 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 public class StopwatchActivity extends Activity {
-	/** Called when the activity is first created. */
+
 	private static final String TAG = "StopwatchActivity";
 
-	Chronometer mChronometer;
-	Boolean mChronoPaused = false;
-	long mElapsedTime = 0;
-	LinearLayout buttonContainer;
-	ImageButton mStartButton, mPauseButton, mStopButton;
-	int mLapCount = 0;
+	private Chronometer mChronometer;
+	private LinearLayout buttonContainer;
+	private ImageButton mStartButton, mPauseButton, mStopButton;
+	
+	private int mLapCount = 0;	
+	private Boolean mChronoPaused = false;
+	
+	private IChronometerService mService;
 
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
@@ -39,34 +46,57 @@ public class StopwatchActivity extends Activity {
 		mStopButton = (ImageButton) findViewById(R.id.bStop);
 		mStopButton.setOnClickListener(stopListener);
 
+		bindService(new Intent(this, ChronometerService.class), mConnection, Context.BIND_AUTO_CREATE);
 	}
-
+	
+	private ServiceConnection mConnection = new ServiceConnection() {
+		
+		public void onServiceDisconnected(ComponentName name) {
+		}
+		
+		public void onServiceConnected(ComponentName name, IBinder service) {
+			mService = IChronometerService.Stub.asInterface(service);
+			Log.v(TAG, "Service Connected");
+			try {
+				if (mService.isRunning()) {
+					buttonContainer.setVisibility(View.VISIBLE);
+					mStartButton.setImageResource(R.drawable.split);
+					mChronoPaused = false;
+				}
+			} catch (RemoteException e) {
+				Log.e(TAG, "Connection to service failed.", e);
+			}
+		}
+	};
+	
 	View.OnClickListener startListener = new OnClickListener() {
 		public void onClick(View v) {
-			if (mChronoPaused) {
-				Log.v(TAG, "start-chrono was paused");
+			try {
+				if (mChronoPaused) {
+					Log.v(TAG, "start-chrono was paused");
+					mChronometer.resume();
+				} 
+				else if (!mService.isRunning()) {
+					Log.v(TAG, "start-chrono was stopped");
+					mChronometer.start();
+				} 
+				else if (!mChronoPaused) {
+					Log.v(TAG, "split button pressed");
+					LinearLayout history = (LinearLayout) findViewById(R.id.llLaps);
+					TextView lap = new TextView(getApplicationContext());
+					mLapCount++;
+					lap.setText(mLapCount
+							+ "."
+							+ timeFormat(mService.getTime()));
+					history.addView(lap, 0);
+				}
+		
 				buttonContainer.setVisibility(View.VISIBLE);
-				mChronometer.setBase(SystemClock.elapsedRealtime()
-						- mElapsedTime);
-			} else if (!mChronometer.isStarted()) {
-				Log.v(TAG, "start-chrono was stopped");
-				buttonContainer.setVisibility(View.VISIBLE);
-				mChronometer.setBase(SystemClock.elapsedRealtime());
-			} else if (!mChronoPaused) {
-				Log.v(TAG, "split button pressed");
-				LinearLayout history = (LinearLayout) findViewById(R.id.llLaps);
-				TextView lap = new TextView(getApplicationContext());
-				mLapCount++;
-				lap.setText(mLapCount
-						+ "."
-						+ timeFormat((SystemClock.elapsedRealtime() - mChronometer
-								.getBase())));
-				history.addView(lap, 0);
+				mStartButton.setImageResource(R.drawable.split);
+				mChronoPaused = false;
+			} catch (RemoteException e) {
+				Log.e(TAG, "Connection to service failed.", e);
 			}
-
-			mChronometer.start();
-			mStartButton.setImageResource(R.drawable.split);
-			mChronoPaused = false;
 		}
 
 		private String timeFormat(long l) {
@@ -102,9 +132,7 @@ public class StopwatchActivity extends Activity {
 		public void onClick(View v) {
 			if (!mChronoPaused) {
 				Log.v(TAG, "pause");
-				mChronometer.stop();
-				mElapsedTime = SystemClock.elapsedRealtime()
-						- mChronometer.getBase();
+				mChronometer.pause();
 				mChronoPaused = true;
 				mStartButton.setImageResource(R.drawable.start);
 			}
@@ -114,9 +142,8 @@ public class StopwatchActivity extends Activity {
 	View.OnClickListener stopListener = new OnClickListener() {
 		public void onClick(View v) {
 			Log.v(TAG, "stop");
-			mChronometer.stop();
 			buttonContainer.setVisibility(View.INVISIBLE);
-			mChronometer.setBase(SystemClock.elapsedRealtime());
+			mChronometer.stop();
 			LinearLayout history = (LinearLayout) findViewById(R.id.llLaps);
 			history.removeAllViews();
 			mStartButton.setImageResource(R.drawable.start);
@@ -124,5 +151,4 @@ public class StopwatchActivity extends Activity {
 			mLapCount = 0;
 		}
 	};
-
 }
